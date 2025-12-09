@@ -36,10 +36,7 @@ def generate_running_routes(
     # Generate routes with safety analysis
     try:
         enhanced_routes = p.generate_running_routes_with_polyline_safety(
-            start_lat,
-            start_lng,
-            target_distance_km,
-            get_routes.optimized_route_finder
+            start_lat, start_lng, target_distance_km, get_routes.optimized_route_finder
         )
 
         # prep metadata for LLM

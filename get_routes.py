@@ -58,6 +58,7 @@ def generate_optimized_endpoints(
 
     return endpoints
 
+
 @observe()
 def test_google_routes_distance(start_lat, start_lng, end_lat, end_lng, mapi=MapsApi):
     """Test actual walking distance using Google Routes API"""
@@ -147,6 +148,7 @@ def calculate_and_test_endpoints(
     print()
     return phase1_routes, all_routes
 
+
 @observe()
 def optimized_route_finder(start_lat, start_lng, target_distance):
     phase1_routes, all_routes = calculate_and_test_endpoints(
@@ -201,6 +203,7 @@ def optimized_route_finder(start_lat, start_lng, target_distance):
         )
         print()
     return final_routes
+
 
 @observe()
 def reverse_geocode_and_filter(endpoints, water_keywords=const.ignore, mapi=MapsApi):
@@ -266,10 +269,10 @@ if __name__ == "__main__":
     print("2. Original comprehensive test (48 API calls)")
     print("3. 🚀 NEW: Optimized smart route finder (6-18 API calls)")
 
-    #start_lat = float(input("Enter starting latitude: "))
-    #start_lng = float(input("Enter starting longitude: "))
+    # start_lat = float(input("Enter starting latitude: "))
+    # start_lng = float(input("Enter starting longitude: "))
     start_lat = 40.730182
-    start_lng = -73.996770 # adding this here for easy testing 
+    start_lng = -73.996770  # adding this here for easy testing
     target_distance = float(input("Enter target distance: "))
 
     optimized_route_finder(start_lat, start_lng, target_distance)

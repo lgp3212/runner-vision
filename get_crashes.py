@@ -8,6 +8,7 @@ from langfuse import observe
 
 load_dotenv()
 
+
 def get_db_connection():
     """Get database connection (Supabase or local fallback)"""
     db_url = os.getenv("SUPABASE_DB_URL")
@@ -19,13 +20,16 @@ def get_db_connection():
             host="localhost", database="runsafe_db", user="lpietrewicz", password=""
         )
 
+
 @observe()
-def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, attr="injuries"):
+def get_area_crash_percentiles(
+    lat: float, lng: float, radius_km: float = 1.0, attr="injuries"
+):
     """Calculate crash percentiles for areas similar to the query location"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # create a grid of sample points around the area to get distribution
         grid_size = 0.01
         sample_points = []
@@ -34,15 +38,15 @@ def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, a
             f"{attr}": f"COALESCE(SUM({attr}), 0)",
             "crashes": "COUNT(*)",
         }
-        
-        for lat_offset in [-2*grid_size, -grid_size, 0, grid_size, 2*grid_size]:
-            for lng_offset in [-2*grid_size, -grid_size, 0, grid_size, 2*grid_size]:
+
+        for lat_offset in [-2 * grid_size, -grid_size, 0, grid_size, 2 * grid_size]:
+            for lng_offset in [-2 * grid_size, -grid_size, 0, grid_size, 2 * grid_size]:
                 sample_lat = lat + lat_offset
                 sample_lng = lng + lng_offset
-                
+
                 lat_buffer = radius_km / 111.0
                 lng_buffer = radius_km / (111.0 * math.cos(math.radians(sample_lat)))
-                
+
                 cursor.execute(
                     f"""
                     SELECT 
@@ -51,22 +55,27 @@ def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, a
                     WHERE latitude BETWEEN %s AND %s
                     AND longitude BETWEEN %s AND %s
                     """,
-                    (sample_lat - lat_buffer, sample_lat + lat_buffer, 
-                     sample_lng - lng_buffer, sample_lng + lng_buffer),
+                    (
+                        sample_lat - lat_buffer,
+                        sample_lat + lat_buffer,
+                        sample_lng - lng_buffer,
+                        sample_lng + lng_buffer,
+                    ),
                 )
-                
+
                 count = cursor.fetchone()[0]
                 sample_points.append(count)
-        
+
         conn.close()
-        
+
         sample_points.sort()
         p50_index = int(0.5 * len(sample_points))
-        
+
         return sample_points[p50_index]
-        
+
     except Exception as e:
         return {"error": f"Percentile calculation failed: {str(e)}"}
+
 
 @observe()
 def get_crashes_near_me(
@@ -112,7 +121,9 @@ def get_crashes_near_me(
                 nearby_crashes.append(clean_crash)
 
         # summary
-        safety_score, total_crashes, total_injuries, total_fatalities = safety_wrapper(lat, lng, radius_km, nearby_crashes)
+        safety_score, total_crashes, total_injuries, total_fatalities = safety_wrapper(
+            lat, lng, radius_km, nearby_crashes
+        )
 
         return {
             "search_location": {"lat": lat, "lng": lng},
@@ -123,11 +134,12 @@ def get_crashes_near_me(
                 "total_injuries": total_injuries,
                 "total_fatalities": total_fatalities,
             },
-            "safety": safety_score
+            "safety": safety_score,
         }
 
     except Exception as e:
         return {"error": f"Database query failed: {str(e)}"}
+
 
 def calculate_safety_score_logarithmic(crash_ratio, injury_ratio, fatality_ratio):
     """Calculate safety score using logarithmic scaling for extreme ratios"""
@@ -137,19 +149,25 @@ def calculate_safety_score_logarithmic(crash_ratio, injury_ratio, fatality_ratio
         fatality_penalty = 0
     else:
         fatality_penalty = min(50, max(0, 25 * math.log(max(fatality_ratio, 0.1))))
-    
+
     safety_score = 100 - crash_penalty - injury_penalty - fatality_penalty
     return max(0, min(100, safety_score))
+
 
 def safety_wrapper(lat, lng, radius_km, nearby_crashes):
     total_crashes = len(nearby_crashes)
     total_injuries = sum(crash["injuries"] for crash in nearby_crashes)
     total_fatalities = sum(crash["fatalities"] for crash in nearby_crashes)
 
-
-    percentile50_crashes = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="crashes")
-    percentile50_injuries = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="injuries")
-    percentile50_fatalities = get_area_crash_percentiles(lat, lng, radius_km=radius_km, attr="fatalities")
+    percentile50_crashes = get_area_crash_percentiles(
+        lat, lng, radius_km=radius_km, attr="crashes"
+    )
+    percentile50_injuries = get_area_crash_percentiles(
+        lat, lng, radius_km=radius_km, attr="injuries"
+    )
+    percentile50_fatalities = get_area_crash_percentiles(
+        lat, lng, radius_km=radius_km, attr="fatalities"
+    )
     try:
         fatality_r = total_fatalities / percentile50_fatalities
     except ZeroDivisionError:
@@ -160,4 +178,3 @@ def safety_wrapper(lat, lng, radius_km, nearby_crashes):
 
     safety_score = calculate_safety_score_logarithmic(crash_r, injury_r, fatality_r)
     return safety_score, total_crashes, total_injuries, total_fatalities
-
