@@ -2,15 +2,20 @@ from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
-import os
-from dotenv import load_dotenv
 
 import get_routes
 import polyline_safety_analysis as psa
 import get_weather
 import get_closures
 
+from langfuse.langchain import CallbackHandler
+import os
+from dotenv import load_dotenv
+
 load_dotenv()
+
+# Initialize LangFuse handler
+langfuse_handler = CallbackHandler()
 
 # state defn
 class RunnerVisionState(TypedDict):
@@ -160,29 +165,62 @@ def contextual_intelligence_agent(state: RunnerVisionState) -> RunnerVisionState
 def street_closure_agent(state: RunnerVisionState) -> RunnerVisionState:
     if not state.get("needs_closures", False):
         print("street closure agent - skipped")
-        print()
         state["closures_data"] = {}
         return state
 
-    print(f"checking closures near ({state['start_lat']:.4f}, {state['start_lng']:.4f})...")
-    print()
+    print(f"checking closures along route polyline...")
     
-    closures = get_closures.get_street_closures(
-        state["start_lat"],
-        state["start_lng"],
-        radius_km=1.0,
-        days_back=14
-    )
-    closure_impact = get_closures.assess_closure_impact(closures)
+    # Get the best route for closure checking
+    if not state.get("routes"):
+        state["closures_data"] = {}
+        return state
+    
+    top_route = state["routes"][0]  # Check most accurate route
+    
+    # Decode polyline
+    import polyline
+    import utils
+    
+    route_points = polyline.decode(top_route['polyline'])
+    sample_points = utils.sample_route_strategically(route_points, num_samples=3)
+    
+    print(f"   Sampling {len(sample_points)} points along route for closure detection")
+    
+    all_closures = []
+    for i, point in enumerate(sample_points):
+        print(f"   Checking closures at point {i+1}/{len(sample_points)}: {point['route_progress']:.0f}% along route")
+        
+        closures = get_closures.get_street_closures(
+            point["lat"],
+            point["lng"],
+            radius_km=0.75,  # Match crash analysis radius
+            days_back=14
+        )
+        
+        if closures.get('closures'):
+            all_closures.extend(closures['closures'])
+    
+    # Deduplicate closures (same closure might appear at multiple sample points)
+    unique_closures = {}
+    for closure in all_closures:
+        # Use street name + start date as unique key
+        key = f"{closure.get('street_name', '')}_{closure.get('work_start_date', '')}"
+        if key not in unique_closures:
+            unique_closures[key] = closure
+    
+    closure_list = list(unique_closures.values())
     
     state["closures_data"] = {
-        "closures": closures,
-        "impact_assessment": closure_impact
+        "closures": {
+            "total_closures": len(closure_list),
+            "closures": closure_list
+        },
+        "impact_assessment": get_closures.assess_closure_impact({
+            "total_closures": len(closure_list)
+        })
     }
     
-    print(f"found {closures.get('total_closures', 0)} active closures")
-    print(f"   impact level: {closure_impact['impact']}")
-    print(f"   {closure_impact['message']}")
+    print(f"   Found {len(closure_list)} unique closures along route")
     print()
     
     return state
@@ -306,6 +344,10 @@ def run_runner_vision(
         "closures_data": {},
         "recommendation": ""
     }
+    result = graph.invoke(
+        initial_state,
+        config={"callbacks": [langfuse_handler]}
+    )
     
     result = graph.invoke(initial_state)
     return result
