@@ -1,9 +1,11 @@
 import os
 import requests
 from dotenv import load_dotenv
+from langfuse import observe
 
 load_dotenv()
 
+@observe()
 def get_weather_conditions(lat: float, lng: float):
     """
     Get current weather conditions from OpenWeatherMap API
@@ -62,7 +64,7 @@ def get_weather_conditions(lat: float, lng: float):
     except KeyError as e:
         return {"error": f"Unexpected weather API response format: {str(e)}"}
 
-
+@observe()
 def assess_weather_risk(weather_data: dict) -> dict:
     """
     Assess weather-related running risk based on Shore et al. findings

@@ -4,6 +4,7 @@ import utils
 
 import os
 from dotenv import load_dotenv
+from langfuse import observe
 
 load_dotenv()
 
@@ -18,6 +19,7 @@ def get_db_connection():
             host="localhost", database="runsafe_db", user="lpietrewicz", password=""
         )
 
+@observe()
 def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, attr="injuries"):
     """Calculate crash percentiles for areas similar to the query location"""
     try:
@@ -66,7 +68,7 @@ def get_area_crash_percentiles(lat: float, lng: float, radius_km: float = 1.0, a
     except Exception as e:
         return {"error": f"Percentile calculation failed: {str(e)}"}
 
-
+@observe()
 def get_crashes_near_me(
     lat: float, lng: float, radius_km: float = 0.5, days_back: int = 60
 ):

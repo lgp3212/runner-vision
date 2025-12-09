@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import constants as const
 import utils
 from constants import Direction, CompassBearing, MapsApi
+from langfuse import observe
 
 load_dotenv()
 
@@ -57,7 +58,7 @@ def generate_optimized_endpoints(
 
     return endpoints
 
-
+@observe()
 def test_google_routes_distance(start_lat, start_lng, end_lat, end_lng, mapi=MapsApi):
     """Test actual walking distance using Google Routes API"""
 
@@ -146,7 +147,7 @@ def calculate_and_test_endpoints(
     print()
     return phase1_routes, all_routes
 
-
+@observe()
 def optimized_route_finder(start_lat, start_lng, target_distance):
     phase1_routes, all_routes = calculate_and_test_endpoints(
         start_lat, start_lng, target_distance
@@ -201,7 +202,7 @@ def optimized_route_finder(start_lat, start_lng, target_distance):
         print()
     return final_routes
 
-
+@observe()
 def reverse_geocode_and_filter(endpoints, water_keywords=const.ignore, mapi=MapsApi):
     """
     Reverse geocode endpoints and filter out water/invalid locations

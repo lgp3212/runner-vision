@@ -1,6 +1,8 @@
 import requests
 from datetime import datetime, timedelta
+from langfuse import observe
 
+@observe()
 def get_street_closures(lat: float, lng: float, radius_km: float = 0.5, days_back: int = 14):
     """
     Get street closures near a location from NYC DOT data
@@ -101,7 +103,7 @@ def get_street_closures(lat: float, lng: float, radius_km: float = 0.5, days_bac
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
 
-
+@observe()
 def assess_closure_impact(closures_data: dict) -> dict:
     """
     Assess how street closures might impact running route
