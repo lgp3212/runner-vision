@@ -39,6 +39,7 @@ class RunnerVisionState(TypedDict):
 
     # final output
     recommendation: str
+    error_messages: list
 
 
 llm = ChatOpenAI(
@@ -98,92 +99,117 @@ def router_agent(state: RunnerVisionState) -> RunnerVisionState:
 
 
 def route_generation_agent(state: RunnerVisionState) -> RunnerVisionState:
+    print(f"generating routes from ({state['start_lat']:.4f}, {state['start_lng']:.4f})")
+    print(f"target distance: {state['target_distance_km']}km\n")
 
-    print(
-        f"generating routes from ({state['start_lat']:.4f}, {state['start_lng']:.4f})"
-    )
-    print(f"target distance: {state['target_distance_km']}km")
-    print()
+    try:
+        routes = get_routes.optimized_route_finder(
+            state["start_lat"], state["start_lng"], state["target_distance_km"]
+        )
 
-    routes = get_routes.optimized_route_finder(
-        state["start_lat"], state["start_lng"], state["target_distance_km"]
-    )
+        if not routes:
+            print("No routes generated")
+            state["routes"] = []
+            state["error_messages"] = state.get("error_messages", []) + ["Route generation failed"]
+            return state
 
-    state["routes"] = routes
-    print(f"generated {len(routes)} routes")
-    for i, route in enumerate(routes, 1):
-        print(f"   {i}. {route['direction']}: {route['accuracy']:.1f}% accuracy")
-    print()
+        state["routes"] = routes
+        print(f"generated {len(routes)} routes")
+        for i, route in enumerate(routes, 1):
+            print(f"   {i}. {route['direction']}: {route['accuracy']:.1f}% accuracy")
+        print()
+
+    except Exception as e:
+        print(f"Route generation failed: {e}")
+        state["routes"] = []
+        state["error_messages"] = state.get("error_messages", []) + [f"Route generation error: {str(e)}"]
 
     return state
 
 
 def safety_analysis_agent(state: RunnerVisionState) -> RunnerVisionState:
-
     if not state.get("needs_safety", False):
         print("safety analysis agent skipped")
         state["safety_analysis"] = []
         return state
 
-    print(f"analyzing crash data for {len(state['routes'])} routes...")
-    print()
+    if not state.get("routes"):
+        print("no routes available for safety analysis")
+        state["safety_analysis"] = []
+        return state
 
-    top_3_routes = sorted(state["routes"], key=lambda x: x["accuracy"], reverse=True)[
-        :3
-    ]
-    print(
-        f"   analyzing top 3 most accurate routes (out of {len(state['routes'])} total)"
-    )
-    print()
+    print(f"analyzing crash data for {len(state['routes'])} routes...\n")
 
-    enhanced_routes = []
-    for i, route in enumerate(top_3_routes, 1):
-        print(
-            f"   analyzing route {i}/3: {route['direction']} ({route['accuracy']:.1f}% accuracy)..."
-        )
-        enhanced_route = psa.analyze_route_safety_detailed(route)
-        enhanced_routes.append(enhanced_route)
+    try:
+        top_3_routes = sorted(state["routes"], key=lambda x: x["accuracy"], reverse=True)[:3]
+        print(f"   analyzing top 3 most accurate routes (out of {len(state['routes'])} total)\n")
 
-        safety_score = enhanced_route["safety_analysis"]["overall_safety_score"]
-        dangerous_count = len(enhanced_route["safety_analysis"]["dangerous_segments"])
-        print(f"    safety score: {safety_score:.1f}/100")
-        print(f"    dangerous segments: {dangerous_count}")
-        print()
+        enhanced_routes = []
+        for i, route in enumerate(top_3_routes, 1):
+            try:
+                print(f"   analyzing route {i}/3: {route['direction']} ({route['accuracy']:.1f}% accuracy)...")
+                enhanced_route = psa.analyze_route_safety_detailed(route)
+                enhanced_routes.append(enhanced_route)
 
-    state["safety_analysis"] = enhanced_routes
-    print("safety analysis complete")
-    print()
+                safety_score = enhanced_route["safety_analysis"]["overall_safety_score"]
+                dangerous_count = len(enhanced_route["safety_analysis"]["dangerous_segments"])
+                print(f"    safety score: {safety_score:.1f}/100")
+                print(f"    dangerous segments: {dangerous_count}\n")
+
+            except Exception as e:
+                print(f"    ⚠️ Failed to analyze route {i}: {e}")
+                # Continue with other routes
+                continue
+
+        if not enhanced_routes:
+            print("all routes failed safety analysis")
+            state["error_messages"] = state.get("error_messages", []) + ["Safety analysis failed"]
+
+        state["safety_analysis"] = enhanced_routes
+        print("safety analysis complete\n")
+
+    except Exception as e:
+        print(f"safety analysis failed: {e}")
+        state["safety_analysis"] = []
+        state["error_messages"] = state.get("error_messages", []) + [f"Safety analysis error: {str(e)}"]
 
     return state
 
-
 def contextual_intelligence_agent(state: RunnerVisionState) -> RunnerVisionState:
-    print(
-        f"checking weather at ({state['start_lat']:.4f}, {state['start_lng']:.4f})..."
-    )
-    print()
+    print(f"checking weather at ({state['start_lat']:.4f}, {state['start_lng']:.4f})...\n")
 
-    weather = get_weather.get_weather_conditions(state["start_lat"], state["start_lng"])
-    weather_risk = get_weather.assess_weather_risk(weather)
+    try:
+        weather = get_weather.get_weather_conditions(state["start_lat"], state["start_lng"])
+        
+        if "error" in weather:
+            print(f"weather check failed: {weather['error']}")
+            state["weather_data"] = {}
+            state["error_messages"] = state.get("error_messages", []) + ["Weather data unavailable"]
+            return state
 
-    state["weather_data"] = {"conditions": weather, "risk_assessment": weather_risk}
+        weather_risk = get_weather.assess_weather_risk(weather)
+        state["weather_data"] = {"conditions": weather, "risk_assessment": weather_risk}
 
-    print(f"current conditions: {weather.get('description', 'unknown')}")
-    print(f"   temperature: {weather.get('temperature_f', 0):.0f}°F")
-    print(f"   visibility: {weather.get('visibility_meters', 0)}m")
-    print(f"   risk level: {weather_risk['risk_level']}")
+        print(f"current conditions: {weather.get('description', 'unknown')}")
+        print(f"   temperature: {weather.get('temperature_f', 0):.0f}°F")
+        print(f"   visibility: {weather.get('visibility_meters', 0)}m")
+        print(f"   risk level: {weather_risk['risk_level']}")
 
-    if weather_risk["risk_level"] == "high":
-        state["weather_too_dangerous"] = True
-        print(f"    dangerous conditions - outdoor running not recommended")
+        if weather_risk["risk_level"] == "high":
+            state["weather_too_dangerous"] = True
+            print(f"    dangerous conditions - outdoor running not recommended\n")
+            return state
+
+        if weather_risk["risk_level"] == "moderate" and not state.get("needs_closures"):
+            state["needs_closures"] = True
+            print(f"    weather risk is moderate - will check closures")
+
         print()
-        return state  # exit early, skip closures check
 
-    if weather_risk["risk_level"] == "moderate" and not state.get("needs_closures"):
-        state["needs_closures"] = True
-        print(f"    weather risk is moderate - will check closures")
-
-    print()
+    except Exception as e:
+        print(f"weather check failed: {e}")
+        state["weather_data"] = {}
+        state["error_messages"] = state.get("error_messages", []) + [f"Weather error: {str(e)}"]
 
     return state
 
@@ -194,136 +220,138 @@ def street_closure_agent(state: RunnerVisionState) -> RunnerVisionState:
         state["closures_data"] = {}
         return state
 
-    print(f"checking closures along route polyline...")
-
-    # Get the best route for closure checking
     if not state.get("routes"):
+        print("⚠️ No routes available for closure checking")
         state["closures_data"] = {}
         return state
 
-    top_route = state["routes"][0]  # Check most accurate route
+    print(f"checking closures along route polyline...")
 
-    # Decode polyline
-    import polyline
-    import utils
+    try:
+        top_route = state["routes"][0]
+        
+        import polyline
+        import utils
 
-    route_points = polyline.decode(top_route["polyline"])
-    sample_points = utils.sample_route_strategically(route_points, num_samples=3)
+        route_points = polyline.decode(top_route["polyline"])
+        sample_points = utils.sample_route_strategically(route_points, num_samples=3)
 
-    print(f"   Sampling {len(sample_points)} points along route for closure detection")
+        print(f"   Sampling {len(sample_points)} points along route for closure detection")
 
-    all_closures = []
-    for i, point in enumerate(sample_points):
-        print(
-            f"   Checking closures at point {i+1}/{len(sample_points)}: {point['route_progress']:.0f}% along route"
-        )
+        all_closures = []
+        for i, point in enumerate(sample_points):
+            try:
+                print(f"   Checking closures at point {i+1}/{len(sample_points)}: {point['route_progress']:.0f}% along route")
 
-        closures = get_closures.get_street_closures(
-            point["lat"],
-            point["lng"],
-            radius_km=0.75,  # Match crash analysis radius
-            days_back=14,
-        )
+                closures = get_closures.get_street_closures(
+                    point["lat"],
+                    point["lng"],
+                    radius_km=0.75,
+                    days_back=14,
+                )
 
-        if closures.get("closures"):
-            all_closures.extend(closures["closures"])
+                if "error" in closures:
+                    print(f"    ⚠️ Closure check failed for point {i+1}")
+                    continue
 
-    # Deduplicate closures (same closure might appear at multiple sample points)
-    unique_closures = {}
-    for closure in all_closures:
-        # Use street name + start date as unique key
-        key = f"{closure.get('street_name', '')}_{closure.get('work_start_date', '')}"
-        if key not in unique_closures:
-            unique_closures[key] = closure
+                if closures.get("closures"):
+                    all_closures.extend(closures["closures"])
 
-    closure_list = list(unique_closures.values())
+            except Exception as e:
+                print(f"    ⚠️ Error checking point {i+1}: {e}")
+                continue
 
-    state["closures_data"] = {
-        "closures": {"total_closures": len(closure_list), "closures": closure_list},
-        "impact_assessment": get_closures.assess_closure_impact(
-            {"total_closures": len(closure_list)}
-        ),
-    }
+        # Deduplicate
+        unique_closures = {}
+        for closure in all_closures:
+            key = f"{closure.get('street_name', '')}_{closure.get('work_start_date', '')}"
+            if key not in unique_closures:
+                unique_closures[key] = closure
 
-    print(f"   Found {len(closure_list)} unique closures along route")
-    print()
+        closure_list = list(unique_closures.values())
+
+        state["closures_data"] = {
+            "closures": {"total_closures": len(closure_list), "closures": closure_list},
+            "impact_assessment": get_closures.assess_closure_impact(
+                {"total_closures": len(closure_list)}
+            ),
+        }
+
+        print(f"   Found {len(closure_list)} unique closures along route\n")
+
+    except Exception as e:
+        print(f"closure detection failed: {e}")
+        state["closures_data"] = {}
+        state["error_messages"] = state.get("error_messages", []) + [f"Closure detection error: {str(e)}"]
 
     return state
 
-
 def synthesis_agent(state: RunnerVisionState) -> RunnerVisionState:
-    print("\ngenerating final recommendation...")
-    print()
+    print("\ngenerating final recommendation...\n")
 
-    # build context with only the data that was collected
-    context = {
-        "user_query": state["query"],
-        "location": {"lat": state["start_lat"], "lng": state["start_lng"]},
-        "target_distance_km": state["target_distance_km"],
-        "routes_generated": len(state["routes"]),
-        "route_details": [
-            {
-                "direction": r["direction"],
-                "accuracy": f"{r['accuracy']:.1f}%",
-                "total_distance_km": r["distance"]["total_distance"],
-            }
-            for r in state["routes"]
-        ],
-    }
+    try:
+        # Check if we have minimum required data
+        if not state.get("routes"):
+            state["recommendation"] = "unable to generate routes. Please try a different location or distance."
+            return state
 
-    # add conditional data if collected
-    if state.get("safety_analysis"):
-        context["safety_data"] = [
-            {
-                "direction": sa["direction"],
-                "overall_safety_score": sa["safety_analysis"]["overall_safety_score"],
-                "dangerous_segments": len(sa["safety_analysis"]["dangerous_segments"]),
-                "dangerous_segment_details": sa["safety_analysis"][
-                    "dangerous_segments"
-                ],
-            }
-            for sa in state["safety_analysis"]
-        ]
-
-    if state.get("weather_data") and state["weather_data"]:
-        context["weather"] = state["weather_data"]
-
-    if state.get("closures_data") and state["closures_data"]:
-        context["closures"] = {
-            "total_closures": state["closures_data"]["closures"].get(
-                "total_closures", 0
-            ),
-            "impact": state["closures_data"]["impact_assessment"]["impact"],
-            "message": state["closures_data"]["impact_assessment"]["message"],
+        # Build context
+        context = {
+            "user_query": state["query"],
+            "location": {"lat": state["start_lat"], "lng": state["start_lng"]},
+            "target_distance_km": state["target_distance_km"],
+            "routes_generated": len(state["routes"]),
+            "route_details": [
+                {
+                    "direction": r["direction"],
+                    "accuracy": f"{r['accuracy']:.1f}%",
+                    "total_distance_km": r["distance"]["total_distance"],
+                }
+                for r in state["routes"]
+            ],
         }
 
-    # call ll, for synthesis
-    messages = [
-        SystemMessage(
-            content="""You are RunnerVision AI, a running safety expert analyzing route options for runners in NYC.
+        # Add conditional data
+        if state.get("safety_analysis"):
+            context["safety_data"] = [
+                {
+                    "direction": sa["direction"],
+                    "overall_safety_score": sa["safety_analysis"]["overall_safety_score"],
+                    "dangerous_segments": len(sa["safety_analysis"]["dangerous_segments"]),
+                }
+                for sa in state["safety_analysis"]
+            ]
 
-Your goal is to provide practical, safety-conscious recommendations that help runners make informed decisions.
+        if state.get("weather_data"):
+            context["weather"] = state["weather_data"]
 
-Safety scores compare crash data to area averages - scores below 80 indicate above-average danger.
-Route accuracy shows how close the actual distance is to the runner's target.
+        if state.get("closures_data"):
+            context["closures"] = {
+                "total_closures": state["closures_data"]["closures"].get("total_closures", 0),
+                "impact": state["closures_data"]["impact_assessment"]["impact"],
+            }
 
-Provide:
-1. A brief summary of what data you analyzed
-2. Your recommended route with clear reasoning
-3. Any safety concerns or weather/closure considerations
-4. Practical advice for the run
+        # Add error messages if any
+        if state.get("error_messages"):
+            context["warnings"] = state["error_messages"]
 
-Be concise but informative. Focus on actionable insights."""
-        ),
-        HumanMessage(
-            content=f"Analyze this data and provide a recommendation:\n\n{context}"
-        ),
-    ]
+        # Call LLM
+        messages = [
+            SystemMessage(content="""You are RunnerVision AI, a running safety expert.
 
-    response = llm.invoke(messages)
-    state["recommendation"] = response.content
+Provide practical recommendations with clear reasoning. If any warnings are present, acknowledge them.
+Be concise but informative."""),
+            HumanMessage(content=f"Analyze this data and provide a recommendation:\n\n{context}")
+        ]
+
+        response = llm.invoke(messages)
+        state["recommendation"] = response.content
+
+    except Exception as e:
+        print(f"Synthesis failed: {e}")
+        state["recommendation"] = f"unable to generate recommendation: {str(e)}\n\nPlease try again or adjust your query."
+
     print()
-
     return state
 
 
@@ -355,6 +383,16 @@ def create_runner_vision_graph():
 def run_runner_vision(
     query: str, start_lat: float, start_lng: float, target_distance_km: float
 ) -> dict:
+    
+    # Input validation
+    if not query or len(query.strip()) < 3:
+        return {"error": "Query must be at least 3 characters"}
+    
+    if not (-90 <= start_lat <= 90) or not (-180 <= start_lng <= 180):
+        return {"error": "Invalid coordinates"}
+    
+    if target_distance_km <= 0 or target_distance_km > 50:
+        return {"error": "Distance must be between 0 and 50 km"}
 
     graph = create_runner_vision_graph()
 
@@ -371,11 +409,18 @@ def run_runner_vision(
         "weather_data": {},
         "closures_data": {},
         "recommendation": "",
+        "error_messages": [],  # ADD THIS
     }
-    result = graph.invoke(initial_state, config={"callbacks": [langfuse_handler]})
-
-    result = graph.invoke(initial_state)
-    return result
+    
+    try:
+        result = graph.invoke(initial_state, config={"callbacks": [langfuse_handler]})
+        return result
+    except Exception as e:
+        print(f"workflow failed: {e}")
+        return {
+            "error": f"System error: {str(e)}",
+            "recommendation": "Unable to process request. Please try again."
+        }
 
 
 # test cases !!!!!
